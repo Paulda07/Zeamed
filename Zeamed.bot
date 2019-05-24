@@ -1,0 +1,18 @@
+{
+    "name": "Zeamed",
+    "description": "",
+    "services": [
+        {
+            "type": "endpoint",
+            "appId": "",
+            "appPassword": "",
+            "endpoint": "http://localhost:3978/api/messages",
+            "id": "d9243a00-7869-11e9-b7ce-99d54da85dd5",
+            "name": "http://localhost:3978/api/messages"
+        }
+    ],
+    "padlock": "",
+    "version": "2.0",
+    "overrides": null,
+    "path": "C:\\Users\\pauls\\OneDrive\\Documents\\ML-AI\\myJsBots\\zeamed-chat-bot\\Zeamed.bot"
+}

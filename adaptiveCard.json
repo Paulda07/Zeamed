@@ -1,0 +1,105 @@
+{
+
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  
+    "version": "1.0",
+  
+    "type": "AdaptiveCard",
+  
+    "speak": "Your Booking is confirmed",
+  
+    "body": [
+  
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Booking Details",
+  
+        "weight": "bolder",
+
+        "size": "extraLarge",
+  
+        "isSubtle": false
+        
+        
+  
+      },
+      
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+  
+        "separator": true,
+
+        "spacing": "large"
+  
+      },
+      
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+        
+        "spacing": "medium"
+  
+      },
+      
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+        
+        "spacing": "medium"
+  
+      },
+
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+        
+        "spacing": "medium"
+  
+      },
+
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+        
+        "spacing": "medium"
+  
+      },
+
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+        
+        "spacing": "medium"
+  
+      },
+
+      {
+  
+        "type": "TextBlock",
+  
+        "text": "Sarah Hum",
+        
+        "spacing": "medium"
+  
+      }
+
+      
+  
+    ]
+  
+  }
