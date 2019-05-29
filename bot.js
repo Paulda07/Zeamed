@@ -1478,8 +1478,8 @@ class MyBot extends ActivityHandler {
                             let x = new Date(value);
                             let myNewDate = new Date(x.getTime() + 60000 * x.getTimezoneOffset());
                             let changedTime = moment.parseZone(myNewDate).format('hh:mm A');
-                            //this.time_store.push({changedTime: value})
-                            console.log(changedTime)
+                            // //this.time_store.push({changedTime: value})
+                            // console.log(changedTime)
                             return resolve(changedTime);
                         })
                     } catch (error) {
