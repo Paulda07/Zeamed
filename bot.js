@@ -2,12 +2,13 @@
 // Licensed under the MIT License.
 
 const Recognizers = require('@microsoft/recognizers-text-suite');
-const { ActivityHandler, CardFactory } = require('botbuilder');
+const { ActivityHandler, CardFactory, MessageFactory } = require('botbuilder');
 const { QnAMaker } = require('botbuilder-ai');
 const request = require('request');
 const MainDialog = require('./mainDialog')
 const AdaptiveCard = require('./adaptiveCard.json');
 const Joi = require('@hapi/joi');
+const moment = require('moment')
 const schema = Joi.object().keys({
     username: Joi.string().alphanum().min(3).max(30).required(),
     password: Joi.string().regex(/(?=^.{6,10}$)(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&amp;*()_+}{&quot;:;'?/&gt;.&lt;,])(?!.*\s).*$/),
@@ -92,9 +93,18 @@ const question = {
 
     booking: 'final_booking',
 
+    userBookings: 'dispUserBookings',
+
+    rescheduleBooking: 'rescheduleCurrentBooking',
+
     none: 'none'
 
 };
+const task = {
+    schedule: 1,
+    reschedule: 2,
+    cancel:3
+}
 
 class MyBot extends ActivityHandler {
     
@@ -122,22 +132,15 @@ class MyBot extends ActivityHandler {
         this.dialogState = this.conversationState.createProperty('DialogState');
        
         this.onMessage(async(TurnContext, next) => {
-            const flow = await this.conversationFlow.get(TurnContext, { lastQuestionAsked: question.none });
-
+            const flow = await this.conversationFlow.get(TurnContext, {lastQuestionAsked: question.none, taskRequired: task.schedule});
             const profile = await this.userProfile.get(TurnContext, {});
-
             const qnaResults = await this.qnaMaker.getAnswers(TurnContext);
-
-
-
+            if (TurnContext.activity.text.toUpperCase() === "Exit".toUpperCase()||TurnContext.activity.text.toUpperCase() === "Back".toUpperCase()){
+                flow.lastQuestionAsked = question.none
+            }
             await MyBot.fillOutUserProfile(flow, profile, qnaResults, TurnContext, this.dialog, this.dialogState);
-
-
-
             // By calling next() you ensure that the next BotHandler is run.
-
             await next();
-
         });
         this.onDialog(async (context, next) => {
 
@@ -167,8 +170,10 @@ class MyBot extends ActivityHandler {
 
             case question.none:
                 if (flag == false|| input.toUpperCase() =="Hi".toUpperCase()||input.toUpperCase() == "Hello".toUpperCase()||input.toUpperCase() == 'Hey'.toUpperCase()){
-                    await turnContext.sendActivity("Hello. Welcome to Zeamed");
-                    await turnContext.sendActivity("Do you want to schedule a test?");
+                    //await turnContext.sendActivity("Okay");
+                    // await turnContext.sendActivity("Do you want to schedule a test?");
+                    var reply = MessageFactory.suggestedActions(['Schedule a test', 'Re-schedule an appointment', 'Cancel an appointment'], 'Click on what you want to do');
+                    await turnContext.sendActivity(reply);                 
                     flow.lastQuestionAsked = question.flag;
                 }
                 else{
@@ -177,24 +182,70 @@ class MyBot extends ActivityHandler {
                     } 
                     else { 
                         // If no answers were returned from QnA Maker, reply with help.
-                            await turnContext.sendActivity("No QnA Maker response was returned.");
+                            await turnContext.sendActivity("I don't know how to answer that.");
                     }
                 }
                 break;
 
             case question.flag:
                 result = this.validateFlag(input);
+                flow.taskRequired = result.flag;
                 if (result.success) {
-                    profile.flag = result.flag;
-                    await turnContext.sendActivity('Do you have a Zeamed account?');
-                    flow.lastQuestionAsked = question.register_flag;
-                    break;
-
+                    if (profile.token === undefined)
+                    {    
+                        
+                        if (flow.taskRequired === 1)
+                        {
+                            await turnContext.sendActivity('Do you have a Zeamed account?');
+                            flow.lastQuestionAsked = question.register_flag;
+                            break;
+                        }
+                        else 
+                        {
+                            await turnContext.sendActivity('Enter your email');
+                            flow.lastQuestionAsked = question.e_id;
+                            break
+                        }
+                    }
+                    else
+                    {
+                        if (flow.taskRequired === 1)
+                    {
+                        await turnContext.sendActivity('Enter the test you want to schedule');
+                        flow.lastQuestionAsked = question.name_test;
+                        break;
+                    }
+                    else
+                    {
+                        flow.lastQuestionAsked = question.userBookings;
+                        result = await this.dispUserBooking(final_data.user_id)
+                        if (result.success)
+                        {
+                            
+                            profile.booking = result.bookings;
+                            if (flow.taskRequired === 2)
+                            {
+                                await dialog.run(turnContext, dialogState, profile.booking, 2);
+                            }
+                            else
+                            { 
+                                await dialog.run(turnContext, dialogState, profile.booking, 3);
+                            }
+                            flow.lastQuestionAsked = question.rescheduleBooking;
+                            break;
+                        }
+                        else{
+                            await turnContext.sendActivity(`${result.message}`);
+                            await turnContext.sendActivity(`Please try again`);
+                            break;
+                        }
+                    }
+                    }
                 } else {
 
                     await turnContext.sendActivity(`${result.message}`);
                     await turnContext.sendActivity(`You can ask me questions`);
-                    await turnContext.sendActivity(`Or say hi to schedule a test`);
+                    await turnContext.sendActivity(`Or say hi to explore your options again`);
                     flag = true
                     flow.lastQuestionAsked = question.none
                     break;
@@ -242,7 +293,6 @@ class MyBot extends ActivityHandler {
 
             case question.lname:
                 profile.lname = input
-                //console.log("in q.l")
                 await turnContext.sendActivity('Enter your email')
                 flow.lastQuestionAsked = question.email;
                 break;
@@ -278,7 +328,8 @@ class MyBot extends ActivityHandler {
                     {
                         result = await Joi.validate({ username: profile.fname, birthyear: 1994, number: input}, schema);
                         profile.number = input
-                        await dialog.run(turnContext, dialogState);
+                        var reply = MessageFactory.suggestedActions(["IND (+91)", "USA (+1)"], 'Enter your country code');
+                        await turnContext.sendActivity(reply);
                         flow.lastQuestionAsked = question.code;
                         break;
                 }catch {
@@ -345,21 +396,45 @@ class MyBot extends ActivityHandler {
                 if (result.success) {
                     final_data.user_id = result.loc.response.id
                     profile.token = result.loc.response.token
-                    //console.log (profile.name_test)
                     display_data.fname = result.loc.response.fname
                     display_data.lname = result.loc.response.lname 
-                    //await turnContext.sendActivity(`You chose ${profile.name_test}`);
-                    await turnContext.sendActivity('Enter the test you want to schedule');
+                    if (flow.taskRequired === 1)
+                    {
+                        await turnContext.sendActivity('Enter the test you want to schedule');
+                        flow.lastQuestionAsked = question.name_test;
+                        break;
+                    }
+                    else
+                    {
+                        flow.lastQuestionAsked = question.userBookings;
+                        result = await this.dispUserBooking(final_data.user_id)
+                        if (result.success)
+                        {
+                            
+                            profile.booking = result.bookings;
+                            if (flow.taskRequired === 2)
+                            {
+                                await dialog.run(turnContext, dialogState, profile.booking, 2);
+                                flow.lastQuestionAsked = question.rescheduleBooking;
+                                break;
 
-
-
-                    flow.lastQuestionAsked = question.name_test;
-
-                    break;
-
+                            }
+                            else
+                            { 
+                                await dialog.run(turnContext, dialogState, profile.booking, 3);
+                                flow.lastQuestionAsked = question.rescheduleBooking;
+                                break;
+                            }
+                            
+                            
+                        }
+                        else{
+                            await turnContext.sendActivity(`${result.message}`);
+                            await turnContext.sendActivity(`Please try again`);
+                            break;
+                        }
+                    }
                 } else {
-
-                    // If we couldn't interpret their input, ask them for it again.
                     await turnContext.sendActivity(`${result.message}`);
                     await turnContext.sendActivity(`Please try again`);
                     await turnContext.sendActivity(`Enter your Email id`);
@@ -370,28 +445,53 @@ class MyBot extends ActivityHandler {
                     break;
 
                 }
+            
+            case question.rescheduleBooking:
+                    result = await this.validateReschedule(turnContext.activity.text.substring(9,18), final_data.user_id, profile.token, flow.taskRequired);
+                    if (flow.taskRequired === 2)
+                    {
+                        if (result.success)
+                        {  
+                            for (let i = 0; i<profile.booking.length; i++)
+                            {
+                                if (profile.booking[i].order_id === turnContext.activity.text.substring(9,18)){
+                                    final_data.order_id = profile.booking[i]._id
+                                }
 
+                            }
+                            profile.date = result.booking;
+                            // await dialog.run(turnContext, dialogState, profile.date);
+                            let tabs = await this.getChoices(profile.date.response, undefined)
+                            //console.log(tabs)
+                            var reply = MessageFactory.suggestedActions( tabs, 'What is the date you want to book on?');
+                            await turnContext.sendActivity(reply);
+
+                            flow.lastQuestionAsked = question.booking_time;
+                            break;
+                        }
+                        else{
+                            await turnContext.sendActivity(`${result.message}`);
+                            await turnContext.sendActivity("Select a card");
+                            break;
+                        }
+                    }
+                    else{
+                        await turnContext.sendActivity(`${result.message}`);
+                        flow.lastQuestionAsked = question.none
+                        break;
+                    }
             case question.name_test:
                 result = await this.validateName(input);
                 if (result.success) {
-
                     profile.name_test = result.text;
-                    //console.log (profile.select_test)
-                    
-                    
-                    //var testData = resolve.response;
                     i = profile.name_test.length
                     for (let j = 0; j < i; j++) {
                         //console.log(j+1)
                         await turnContext.sendActivity(`-${j+1}. ${profile.name_test[j].test_name}`);
                     }
-                    await turnContext.sendActivity(`Enter your choice`);
-                    
+                    await turnContext.sendActivity(`Enter your choice using numbers`);                   
                     flow.lastQuestionAsked = question.select_test;
-                    //console.log("inside the name-test after updating question")
-
                     break;
-
                 } else {
 
                     // If we couldn't interpret their input, ask them for it again.
@@ -401,7 +501,6 @@ class MyBot extends ActivityHandler {
                     await turnContext.sendActivity(result.message);
                     await turnContext.sendActivity('Check the spelling or try entering a different test');
                     break;
-
                 }
             
             case question.select_test:
@@ -414,7 +513,7 @@ class MyBot extends ActivityHandler {
                     master_data.master_id = profile.name_test[(profile.test_no)]._id
                     display_data.test_name = profile.name_test[(profile.test_no)].test_name
                     await turnContext.sendActivity(`You chose: ${profile.name_test[(profile.test_no)].test_name}.`);                  
-                    await turnContext.sendActivity(`Enter the location you can take the test in`);
+                    await turnContext.sendActivity(`Enter the location you can take the test in using numbers`);
                     await turnContext.sendActivity(`(city and state)`);
 
                     flow.lastQuestionAsked = question.loc;
@@ -431,7 +530,6 @@ class MyBot extends ActivityHandler {
                     //await turnContext.sendActivity("Try selecting an option mentioned above");
 
                     break;
-
                 }
 
             case question.loc:
@@ -462,7 +560,6 @@ class MyBot extends ActivityHandler {
                     await turnContext.sendActivity("Please try entering a different closer location");
 
                     break;
-
                 }  
             
             case question.select_loc:
@@ -470,7 +567,7 @@ class MyBot extends ActivityHandler {
                 if (result.success) {
                 profile.booking = result.booking;
                 final_data.contact = profile.name_test
-                await dialog.run(turnContext, dialogState, profile.booking);
+                await dialog.run(turnContext, dialogState, profile.booking, 1);
                 flow.lastQuestionAsked = question.booking_date;
                 break;
 
@@ -483,24 +580,17 @@ class MyBot extends ActivityHandler {
                 await turnContext.sendActivity(result.message || "I'm sorry, I didn't understand that.");
                 await turnContext.sendActivity("Try selecting another option mentioned above");
                 break;
-
                 }
 
             case question.booking_date:
                 result = await this.validateChoice(turnContext.activity.text[11], profile.booking);
-
                 if (result.success) {
                 profile.date = result.date
-                //console.log("inside the select-test before updating question")
-                //console.log (profile.date)
-                //await turnContext.sendActivity("Choose the Dates");
-                await dialog.run(turnContext, dialogState, profile.date);
-                
-                //await dialog.run(turnContext, dialogState);
+                let tabs = await this.getChoices(profile.date.response, undefined);
+                var reply = MessageFactory.suggestedActions( tabs, 'What is the date you want to book on?');
+                await turnContext.sendActivity(reply);
                 flow.lastQuestionAsked = question.booking_time;
-
                 break;
-
                 } else {
 
                 // If we couldn't interpret their input, ask them for it again.
@@ -509,54 +599,38 @@ class MyBot extends ActivityHandler {
 
                 await turnContext.sendActivity(result.message || "I'm sorry, I didn't understand that.");
                 await turnContext.sendActivity("Choose a booking from the displayed cards");
-                await dialog.run(turnContext, dialogState, profile.booking);
+                await dialog.run(turnContext, dialogState, profile.booking, 1);
                 break;
-
                 }
             
-            case question.booking_time:
-                result = await this.validateDate(turnContext.activity.text, profile.date);
-
-                if (result.success) {
+            case question.booking_time:  
+            result = await this.validateDate(turnContext.activity.text, profile.date);
+            if (result.success) {
                 profile.index = result.index
-                //console.log("inside the select-test before updating question")
-                //console.log (profile.date)
-                //await turnContext.sendActivity("Choose the Dates");
-                await dialog.run(turnContext, dialogState, profile.date, profile.index);
-                
-                //await dialog.run(turnContext, dialogState);
-                //console.log(profile.date.response[0].timings)
+                let tabs = await this.getChoices(profile.date.response, profile.index)
+                var reply = MessageFactory.suggestedActions(tabs, 'What is the date you want to book on?');
+                await turnContext.sendActivity(reply);
                 flow.lastQuestionAsked = question.booking;
-
-                break;
-
-                } else {
-
-                // If we couldn't interpret their input, ask them for it again.
-
-                // Don't update the conversation flag, so that we repeat this step.
-
-                //await turnContext.sendActivity(result.message || "I'm sorry, I didn't understand that.");
+                break;  
+            } else {
                 await turnContext.sendActivity("Choose the date from the cards mentioned below");
-                await dialog.run(turnContext, dialogState, profile.date);
+                let tabs = await this.getChoices(profile.date.response, undefined)
+                var reply = MessageFactory.suggestedActions(tabs, 'What is the date you want to book on?');
+                await turnContext.sendActivity(reply);
                 break;
-
-                }
+                    
+                }             
 
             case question.booking:
-                result = await this.validateTime(turnContext.activity.text, profile.date.response[profile.index], profile.token);
+                result = await this.validateTime(turnContext.activity.text, profile.date.response[profile.index], profile.token, flow.taskRequired);
                 if (result.success) {
-                profile.final_booking = result.booking
-                //console.log("inside the select-test before updating question")
-                //console.log (profile.date)
-                //await turnContext.sendActivity("Choose the Dates");
-                //console.log(profile.date)
+                profile.final_booking = result.booking  
                 await turnContext.sendActivity(`${profile.final_booking.message}`);
                 //console.log(profile.date)
                 AdaptiveCard.body[1].text = "Provider: "+display_data.provider
                 AdaptiveCard.body[2].text = "Patient: "+display_data.fname+ " "+ display_data.lname
                 AdaptiveCard.body[3].text = "Test/Procedure: "+ display_data.test_name
-                AdaptiveCard.body[4].text = "Duration: "+ display_data.duration
+                AdaptiveCard.body[4].text = "Duration: "+ display_data.duration+ " minutes"
                 AdaptiveCard.body[5].text = "Booking Date: "+ display_data.datestring
                 AdaptiveCard.body[6].text = "Booking Time: "+ display_data.time
                 AdaptiveCard.body[7].text = "Price: $"+ display_data.price+".00"
@@ -580,22 +654,28 @@ class MyBot extends ActivityHandler {
                 break;
 
                 }
-
-
         }
-
     };
 
     static validateFlag(input) {
-
-        const flag = input
-
-
-        return flag.toUpperCase() === "yes".toUpperCase()
+        let flag = 0
+        if (input.toUpperCase() === 'Schedule a test'.toUpperCase())
+        {
+            flag = 1;
+        }
+        else if (input.toUpperCase() === 'Re-schedule an appointment'.toUpperCase())
+        {
+            flag = 2;
+        }
+        else if (input.toUpperCase() === 'Cancel an appointment'.toUpperCase())
+        {
+            flag = 3;
+        }
+        return flag !== 0
 
             ? { success: true, flag: flag }
 
-            : { success: false, message: 'Okay' };
+            : { success: false, message: 'I cannot do that ' };
 
 
 
@@ -673,6 +753,179 @@ class MyBot extends ActivityHandler {
     
     };
 
+    static dispUserBooking(id){
+        return new Promise (async(resolve, reject)=>{
+            var user = {userId: id}
+            //console.log("disp_user sucess/s")
+        var testData = await getData("https://api.zeamed.com:1002/User/getOrders",user)      
+        async function getData(text,user) {
+            try {
+                return new Promise((resolve, reject) => {
+                    request.post(text,{
+                json: user}, (err, response, body) => {
+                    if (err) {
+                        console.log(err);
+                    } else if (!response.statusCode == 200) {
+                        console.log(null);
+                    } else {
+                        var localData = body;
+                        var testData2 = localData
+                        return resolve (testData2)
+                    }       
+                })
+            })
+            } catch (error) {
+                console.log("err", error)
+            }
+        }
+        var testData2 = []
+        for (let i = 0; i<testData.response.length; i++)
+        {
+            if  (testData.response[i].status === 0||testData.response[i].status === 1||testData.response[i].status === 2||testData.response[i].status === 3||testData.response[i].status === 5||testData.response[i].status === 7){
+                testData2.push(testData.response[i])
+            }
+        }
+        return resolve (testData.success == true  && testData2.length> 0
+            ? { success: true, bookings: testData2 }
+            : { success: false, message: testData.message });  
+        })
+    };
+
+    static validateReschedule(text, id, token, task){
+        try
+        {
+        var data = {}
+        var payload = {
+            id: text,
+            userId: id
+        }
+        var options = {
+            url: 'https://api.zeamed.com:1002/User/getOrderDetails',
+            headers: {
+              'authorization': token
+            },
+            json: payload
+          };
+        return new Promise (async(resolve, reject)=>{
+            var testData = await getData(options)
+            async function getData(text, payload) {
+                try {
+                    return new Promise((resolve, reject) => {
+                        request.post(options, (err, response, body)=> {
+                            if (err) {
+                                console.log(err);
+                            } else if (!response.statusCode == 200) {
+                                console.log(null);
+                            } else {
+                                var localData = body;
+                                var testData = localData.response;
+                                return resolve (testData)
+                            }       
+                        })
+                    })
+                } catch (error) {
+                    console.log("err", error)
+                }
+            }
+            if (task === 2)
+            {
+                display_data.provider = testData.provider_name
+                display_data.test_name = testData.test_name
+                display_data.duration = testData.duration
+                display_data.price = testData.price
+                final_data.provider_id = testData.provider
+                final_data.test_id = testData.test
+                final_data.updated_by = testData.createdBy
+                data = {
+                    current_date: Date.now(),
+                    provider: testData.provider,
+                    test_id: testData.test
+                }
+                var testData2 = await getBookings(data)
+                async function getBookings(data) {
+                    try {      
+                        return new Promise((resolve, reject) => {
+                            request.post('https://api.zeamed.com:1002/BackEnd/getAvailableSlots',{
+                                    json: data }, (err, response, body) => {
+                                if (err) {
+                                    console.log(err);
+                                } else if (!response.statusCode == 200) {
+                                    console.log(null);
+                                } else {
+                                    var localData = body;
+                                    var testData2 = localData
+                                    return resolve (testData2)
+                                }       
+                            })
+                        })
+                    }catch (error) {
+                        console.log(error)
+                        return {
+                            success: false,
+                            message: "I'm sorry, I could not interpret that as an option."
+                        };
+                    }
+                }
+            
+                return resolve (testData2 !== undefined && testData2.response!== 0
+
+                    ? { success: true, booking: testData2}
+
+                    : { success: false, message: 'We do not have any later dates for your appointment' });       
+            }
+            else
+            {
+                data = {
+                    order_id: testData._id,
+                    updated_by: testData.createdBy
+                }
+                options = {
+                    url: 'https://api.zeamed.com:1002/User/cancel_order',
+                    headers: {
+                      'authorization': token
+                    },
+                    json: data
+                  };
+                var testData2 = await getBookings(options)
+                async function getBookings(data) {
+                    try {      
+                        return new Promise((resolve, reject) => {
+                            request.post(data, (err, response, body) => {
+                                if (err) {
+                                    console.log(err);
+                                } else if (!response.statusCode == 200) {
+                                    console.log(null);
+                                } else {
+                                    var localData = body;
+                                    var testData2 = localData
+                                    return resolve (testData2)
+                                }       
+                            })
+                        })
+                    }catch (error) {
+                        console.log(error)
+                        return {
+                            success: false,
+                            message: "I'm sorry, I could not interpret that as an option."
+                        };
+                    }
+                }
+                return resolve (testData2 !== undefined && testData2.success == true
+                    ? { success: true, message: testData2.message}
+                    : { success: false, message: testData2.message});
+            }
+        })
+        
+    }catch (error)
+    {
+        console.log(error)
+        return {
+            success: false,
+            message: "I'm sorry that can't be performed at the moment"
+        };
+    }
+    };
+    
     static validateOTP(input, token){
         
         //var log = pass
@@ -1094,20 +1347,13 @@ class MyBot extends ActivityHandler {
     };
 
     static validateDate(input, book) {
-
         let j = -1
         return new Promise (async(resolve, reject)=>{
-            //console.log(book.response.length)
         for (let i=0; i< book.response.length; i++){
-            //console.log(input)
-            //console.log(book.response[i].dateString)
             if (book.response[i].dateString == input)
             {   
                 j = i;}
         };
-        
-
-
         return resolve (j !== -1
 
             ? { success: true, index: j }
@@ -1118,89 +1364,152 @@ class MyBot extends ActivityHandler {
 
     };
 
-    static validateTime(input, date, token) {
+    static validateTime(input, date, token, task) {
         
         var d = date.timings[0]
         var d1 = d.substring(0,11)
         var d3 = d.substring(16,)
-
-        //console.log(d1)
-        //console.log(d3)
         var m,h;
         m = input.substring(2,5)
         if (input[6] =='P'&& input.substring(0,2) !== '12'){    
             h = input.substring(0,2)
             h= 12+(parseInt(h,10))
-            h = h.toString()
-            
+            h = h.toString()      
         }
         else{
             h = input.substring(0,2)
         }
         var datestring = d1+h+m+d3
-        //console.log(MainDialog.time_store)
-        //console.log(datestring)
-        //console.log(datestring)
+        display_data.time = input
+        display_data.datestring = date.dateString
         return new Promise (async(resolve, reject)=>{
-            //console.log(loc, typeof(loc))
-            //console.log(login)
-            
-            final_data.createdBy = final_data.user_id
-            //console.log(final_data)
-            display_data.provider = final_data.provider_name
-            display_data.time = input
-            display_data.datestring = date.dateString
-            //console.log(display_data)
-            var options = {
-                url: 'https://api.zeamed.com:1002/User/booking',
-                headers: {
-                  'authorization': token
-                },
-                json: final_data
-              };
-            //console.log(oauth)
-            final_data.booked_date = datestring;
-            var testData = await getData(options)
-    
-            async function getData(options) {
-                            try {
-                                //console.log(text)
-                
-                                return new Promise((resolve, reject) => {
-                                    request.post(options, (err, response, body) => {
-                
-                                    // console.log({ "response": response, "body": body, "err": err })
-                                    if (err) {
-                                        console.log(err);
-                                    } else if (!response.statusCode == 200) {
-                                        console.log(null);
-    
-    
-                                    } else {
-                                        var localData = body;
-                                        var testData2 = localData
-                                        //console.log(localData)
-                                        return resolve (testData2)
-                                        
-    
-                                    }       
-    
-    
-                                })
+            if (task === 1)
+            {
+                final_data.createdBy = final_data.user_id
+                display_data.provider = final_data.provider_name
+                var options = {
+                    url: 'https://api.zeamed.com:1002/User/booking',
+                    headers: {
+                    'authorization': token
+                    },
+                    json: final_data
+                };
+                //console.log(oauth)
+                final_data.booked_date = datestring;
+                var testData = await getData(options)
+                async function getData(options) {
+                    try {
+                        return new Promise((resolve, reject) => {
+                            request.post(options, (err, response, body) => {
+                                if (err) {
+                                    console.log(err);
+                                } else if (!response.statusCode == 200) {
+                                    console.log(null);
+                                } else {
+                                    var localData = body;
+                                    var testData2 = localData
+                                    //console.log(localData)
+                                    return resolve (testData2)                               
+                                }       
                             })
-                            } catch (error) {
-                                console.log("err", error)
-                            }
-                        }
-            //console.log(testData.booked_date)
+                        })
+                    } catch (error) {
+                        console.log("err", error)
+                    }
+                }
+            }
+            else{
+                final_data.booked_date = datestring;
+                var final_data_new = {
+                    booked_date: final_data.booked_date,
+                    order_id: final_data.order_id,
+                    provider_id: final_data.provider_id,
+                    test_id: final_data.test_id,
+                    updated_by: final_data.updated_by
+                }
+                var options = {
+                    url: 'https://api.zeamed.com:1002/User/reschedule_user',
+                    headers: {
+                    'authorization': token
+                    },
+                    json: final_data_new
+                };
+                var testData = await getData(options)
+                async function getData(options) {
+                    try {
+                        return new Promise((resolve, reject) => {
+                            request.post(options, (err, response, body) => {
+                                if (err) {
+                                    console.log(err);
+                                } else if (!response.statusCode == 200) {
+                                    console.log(null);
+                                } else {
+                                    var localData = body;
+                                    var testData2 = localData
+                                    //console.log(localData)
+                                    return resolve (testData2)
+                                }       
+                            })
+                        })
+                    } catch (error) {
+                    console.log("err", error)
+                    }
+                }
+            }
             return resolve (testData !== undefined && testData.message !== undefined
-    
+
                 ? { success: true, booking: testData }
+
+                : { success: false, message: testData.message }
+            );  
+        })
+
+    };
+    static async getChoices(book, index =-1)  {
+        var cardOptions = []
+        return new Promise(async(resolve, reject) => {
+        if (index !== -1){
+            for (let i = 0; i<book[index].timings.length; i++)
+            {
+                var i1 = await timeConversion(book[index].timings[i])
+                async function timeConversion(value) {
+                    try {
+                        return new Promise(async(resolve, reject) => {
+                            let x = new Date(value);
+                            let myNewDate = new Date(x.getTime() + 60000 * x.getTimezoneOffset());
+                            let changedTime = moment.parseZone(myNewDate).format('hh:mm A');
+                            //this.time_store.push({changedTime: value})
+                            console.log(changedTime)
+                            return resolve(changedTime);
+                        })
+                    } catch (error) {
+                    console.log("err", error)
+                    }
+                }
+                cardOptions.push(i1)
+            }
+            
+                //console.log(book[index].timings.length)
+           
+        }
+        else{
+            for (let i =0; i<book.length; i++)
+                {
+                    if (book[i].timings.length>0){
+                        cardOptions.push(book[i].dateString)
+                    }
+                    
     
-                : { success: false, message: testData.message });  
-            })
+                }
+    
+        } 
+        return resolve(cardOptions);
+
+    })
+
         
-    };    
+
+    }
 }
 
     module.exports.MyBot = MyBot;
