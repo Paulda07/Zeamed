@@ -513,7 +513,7 @@ class MyBot extends ActivityHandler {
                     master_data.master_id = profile.name_test[(profile.test_no)]._id
                     display_data.test_name = profile.name_test[(profile.test_no)].test_name
                     await turnContext.sendActivity(`You chose: ${profile.name_test[(profile.test_no)].test_name}.`);                  
-                    await turnContext.sendActivity(`Enter the location you can take the test in using numbers`);
+                    await turnContext.sendActivity(`Enter the location you can take the test in`);
                     await turnContext.sendActivity(`(city and state)`);
 
                     flow.lastQuestionAsked = question.loc;
@@ -544,7 +544,7 @@ class MyBot extends ActivityHandler {
                         await turnContext.sendActivity(`-${j+1}. ${profile.loc[j].description}`);
                     }
 
-                    await turnContext.sendActivity(`Enter the location option`);
+                    await turnContext.sendActivity(`Enter the location option using the numbers displayed above`);
 
                     flow.lastQuestionAsked = question.select_loc;
 
@@ -648,7 +648,7 @@ class MyBot extends ActivityHandler {
 
                 // Don't update the conversation flag, so that we repeat this step.
 
-                await turnContext.sendActivity(result.message || "I'm sorry, I didn't understand that.");
+                await turnContext.sendActivity(result.message || "I'm sorry, I can't do that.");
                 flow.lastQuestionAsked = question.none
                 flag = true
                 break;
@@ -1456,7 +1456,7 @@ class MyBot extends ActivityHandler {
                     }
                 }
             }
-            return resolve (testData !== undefined && testData.message !== undefined
+            return resolve (testData.sucess == true && testData.message !== undefined
 
                 ? { success: true, booking: testData }
 
