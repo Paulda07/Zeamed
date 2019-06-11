@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const Recognizers = require('@microsoft/recognizers-text-suite');
+//const Recognizers = require('@microsoft/recognizers-text-suite');
 const { ActivityHandler, CardFactory, MessageFactory } = require('botbuilder');
 const { QnAMaker } = require('botbuilder-ai');
 const request = require('request');
